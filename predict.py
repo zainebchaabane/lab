@@ -2,176 +2,155 @@
 import pandas as pd
 import numpy as np
 import joblib
-from pathlib import Path
 
-# =========================================
-# 1. FILE PATHS
-# =========================================
-
-BASE_DIR = Path(r"C:\ddos_lab")
-
-MODEL_PATH = BASE_DIR / "ddos_ids_models.joblib"
-CSV_PATH = BASE_DIR / "flows" / "live_flows.csv"
-
-
-# =========================================
-# 2. LOAD TRAINED MODELS
-# =========================================
+# File paths
+MODEL_PATH = "C:/ddos_lab/ddos_ids_models.joblib"
+CSV_PATH = "C:/ddos_lab/flows/live_flows.csv"
+OUTPUT_PATH = "C:/ddos_lab/predictions.csv"
 
 print("Loading trained models...")
+bundle = joblib.load(MODEL_PATH)
 
-saved = joblib.load(MODEL_PATH)
+dt_model = bundle["decision_tree"]
+lr_model = bundle["logistic_regression"]
+scaler = bundle["scaler"]
 
-dt_model = saved["decision_tree"]
-lr_model = saved["logistic_regression"]
+scale_cols = bundle["scale_cols"]
+selected_features = bundle["selected_features"]
 
-scaler = saved["scaler"]
-scale_cols = list(saved["scale_cols"])
+# CICFlowMeter names -> CIC-IDS2017 names
+rename_columns = {
+    "Tot Fwd Pkts": "Total Fwd Packets",
+    "Tot Bwd Pkts": "Total Backward Packets",
+    "TotLen Fwd Pkts": "Total Length of Fwd Packets",
+    "TotLen Bwd Pkts": "Total Length of Bwd Packets",
 
-selected_features = list(saved["selected_features"])
-feature_columns = list(saved["feature_columns"])
+    "Fwd Pkt Len Max": "Fwd Packet Length Max",
+    "Fwd Pkt Len Min": "Fwd Packet Length Min",
+    "Fwd Pkt Len Mean": "Fwd Packet Length Mean",
+    "Fwd Pkt Len Std": "Fwd Packet Length Std",
 
+    "Bwd Pkt Len Max": "Bwd Packet Length Max",
+    "Bwd Pkt Len Min": "Bwd Packet Length Min",
+    "Bwd Pkt Len Mean": "Bwd Packet Length Mean",
+    "Bwd Pkt Len Std": "Bwd Packet Length Std",
 
-# =========================================
-# 3. LOAD EXTRACTED NETWORK FLOWS
-# =========================================
+    "Flow Byts/s": "Flow Bytes/s",
+    "Flow Pkts/s": "Flow Packets/s",
 
-print("Reading captured network flows...")
+    "Fwd IAT Tot": "Fwd IAT Total",
+    "Bwd IAT Tot": "Bwd IAT Total",
 
-if not CSV_PATH.exists():
-    raise FileNotFoundError(
-        f"Flow CSV not found: {CSV_PATH}"
-    )
+    "Fwd Header Len": "Fwd Header Length",
+    "Bwd Header Len": "Bwd Header Length",
 
-flows = pd.read_csv(CSV_PATH)
+    "Fwd Pkts/s": "Fwd Packets/s",
+    "Bwd Pkts/s": "Bwd Packets/s",
 
-print(f"Number of extracted flows: {len(flows)}")
+    "Pkt Len Min": "Min Packet Length",
+    "Pkt Len Max": "Max Packet Length",
+    "Pkt Len Mean": "Packet Length Mean",
+    "Pkt Len Std": "Packet Length Std",
+    "Pkt Len Var": "Packet Length Variance",
 
+    "FIN Flag Cnt": "FIN Flag Count",
+    "SYN Flag Cnt": "SYN Flag Count",
+    "RST Flag Cnt": "RST Flag Count",
+    "PSH Flag Cnt": "PSH Flag Count",
+    "ACK Flag Cnt": "ACK Flag Count",
+    "URG Flag Cnt": "URG Flag Count",
+    "ECE Flag Cnt": "ECE Flag Count",
 
-if flows.empty:
-    print("No network flows available.")
-    raise SystemExit
+    "Pkt Size Avg": "Average Packet Size",
+    "Fwd Seg Size Avg": "Avg Fwd Segment Size",
+    "Bwd Seg Size Avg": "Avg Bwd Segment Size",
 
+    "Subflow Fwd Pkts": "Subflow Fwd Packets",
+    "Subflow Fwd Byts": "Subflow Fwd Bytes",
+    "Subflow Bwd Pkts": "Subflow Bwd Packets",
+    "Subflow Bwd Byts": "Subflow Bwd Bytes",
 
-# =========================================
-# 4. VALIDATE REQUIRED FEATURES
-# =========================================
+    "Init Fwd Win Byts": "Init_Win_bytes_forward",
+    "Init Bwd Win Byts": "Init_Win_bytes_backward",
 
-missing_columns = [
-    col for col in feature_columns
-    if col not in flows.columns
-]
-
-if missing_columns:
-    raise ValueError(
-        "CICFlowMeter output is missing these "
-        f"training features:\n{missing_columns}"
-    )
-
-# Keep exactly the features used during training
-X = flows[feature_columns].copy()
-
-# Convert values to numeric
-X = X.apply(pd.to_numeric, errors="coerce")
-
-# Replace infinity with NaN
-X = X.replace([np.inf, -np.inf], np.nan)
-
-# Identify invalid flows
-valid_mask = X.notna().all(axis=1)
-
-X_valid = X.loc[valid_mask].copy()
-
-print(f"Valid flows: {len(X_valid)}")
-print(f"Invalid flows: {(~valid_mask).sum()}")
-
-if X_valid.empty:
-    print("No valid flows to classify.")
-    raise SystemExit
-
-
-# =========================================
-# 5. APPLY THE TRAINING SCALER
-# =========================================
-
-X_scaled = X_valid.copy()
-
-X_scaled[scale_cols] = scaler.transform(
-    X_valid[scale_cols]
-)
-
-
-# =========================================
-# 6. SELECT THE SAME 20 FEATURES
-# =========================================
-
-X_selected = X_scaled[selected_features]
-
-
-# =========================================
-# 7. PREDICT WITH BOTH MODELS
-# =========================================
-
-dt_predictions = dt_model.predict(X_selected)
-
-lr_predictions = lr_model.predict(X_selected)
-
-labels = {
-    0: "BENIGN",
-    1: "DDoS"
+    "Fwd Act Data Pkts": "act_data_pkt_fwd",
+    "Fwd Seg Size Min": "min_seg_size_forward"
 }
 
+print("Reading captured network flows...")
+df = pd.read_csv(CSV_PATH)
 
-# =========================================
-# 8. DISPLAY RESULTS
-# =========================================
+print("Number of extracted flows:", len(df))
 
-print("\n========== TRAFFIC CLASSIFICATION ==========\n")
+# Rename CICFlowMeter columns
+df.rename(columns=rename_columns, inplace=True)
 
-results = []
+# Check required scaling features
+missing = [col for col in scale_cols if col not in df.columns]
 
-for i, (dt_pred, lr_pred) in enumerate(
-    zip(dt_predictions, lr_predictions)
-):
+if missing:
+    print("Missing scaling features:")
+    for col in missing:
+        print("-", col)
+    raise ValueError("Some required features are missing.")
 
-    dt_label = labels[int(dt_pred)]
-    lr_label = labels[int(lr_pred)]
+# Keep only rows with valid numeric values in scaling columns
+X = df[scale_cols].copy()
 
-    results.append({
-        "Flow": int(X_valid.index[i]),
-        "Decision Tree": dt_label,
-        "Logistic Regression": lr_label
-    })
+for col in scale_cols:
+    X[col] = pd.to_numeric(X[col], errors="coerce")
 
-    print(f"Flow {X_valid.index[i]}")
+X.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-    print(f"Decision Tree: {dt_label}")
-    print(f"Logistic Regression: {lr_label}")
+valid_rows = X.notna().all(axis=1)
 
-    if dt_label == lr_label:
-        print(f"Agreement: {dt_label}")
-    else:
-        print("Agreement: Models disagree")
+X = X.loc[valid_rows].copy()
+df_valid = df.loc[valid_rows].copy()
 
-    print("--------------------------------------------")
+if X.empty:
+    raise ValueError("No valid flows remain after cleaning.")
 
+# Apply the ORIGINAL training scaler
+X_scaled = scaler.transform(X)
 
-# =========================================
-# 9. SAVE PREDICTIONS
-# =========================================
+X_scaled = pd.DataFrame(
+    X_scaled,
+    columns=scale_cols,
+    index=X.index
+)
 
-results_df = pd.DataFrame(results)
+# Select the same 20 features used during training
+X_selected = X_scaled[selected_features]
 
-OUTPUT_PATH = BASE_DIR / "predictions.csv"
+print("\nMaking predictions...")
 
-results_df.to_csv(OUTPUT_PATH, index=False)
+# Predict
+dt_predictions = dt_model.predict(X_selected)
+lr_predictions = lr_model.predict(X_selected)
 
-print("\n========== SUMMARY ==========")
+# Convert encoded labels to readable labels
+label_names = {0: "BENIGN", 1: "DDoS"}
 
-print("\nDecision Tree:")
-print(results_df["Decision Tree"].value_counts())
+results = pd.DataFrame({
+    "Flow ID": df_valid["Flow ID"].values,
+    "Decision Tree": [
+        label_names.get(int(x), str(x)) for x in dt_predictions
+    ],
+    "Logistic Regression": [
+        label_names.get(int(x), str(x)) for x in lr_predictions
+    ]
+})
 
-print("\nLogistic Regression:")
-print(results_df["Logistic Regression"].value_counts())
+results.to_csv(OUTPUT_PATH, index=False)
 
-print(f"\nPredictions saved to: {OUTPUT_PATH}")
+print("\nPrediction results:")
+print(results.to_string(index=False))
+
+print("\nTotal valid flows:", len(results))
+print("Decision Tree predictions:")
+print(results["Decision Tree"].value_counts())
+
+print("\nLogistic Regression predictions:")
+print(results["Logistic Regression"].value_counts())
+
+print("\nResults saved to:", OUTPUT_PATH)
