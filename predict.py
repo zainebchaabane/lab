@@ -77,7 +77,8 @@ rename_columns = {
     "Fwd Seg Size Min": "min_seg_size_forward"
 }
 
-print("Reading captured network flows...")
+# Read captured network flows
+print("\nReading captured network flows...")
 df = pd.read_csv(CSV_PATH)
 
 print("Number of extracted flows:", len(df))
@@ -89,28 +90,40 @@ df.rename(columns=rename_columns, inplace=True)
 missing = [col for col in scale_cols if col not in df.columns]
 
 if missing:
-    print("Missing scaling features:")
+    print("\nMissing scaling features:")
     for col in missing:
         print("-", col)
+
     raise ValueError("Some required features are missing.")
 
-# Keep only rows with valid numeric values in scaling columns
+# Extract numerical features
 X = df[scale_cols].copy()
 
+# Convert features to numeric
 for col in scale_cols:
     X[col] = pd.to_numeric(X[col], errors="coerce")
 
+# Replace infinity with NaN
 X.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-valid_rows = X.notna().all(axis=1)
+# Display invalid values before replacement
+print("\nInvalid values before replacement:")
+print("NaN values:", X.isna().sum().sum())
 
-X = X.loc[valid_rows].copy()
-df_valid = df.loc[valid_rows].copy()
+# Replace all invalid values with zero
+X.fillna(0, inplace=True)
 
-if X.empty:
-    raise ValueError("No valid flows remain after cleaning.")
+print("\nInvalid values after replacement:")
+print("NaN values:", X.isna().sum().sum())
+
+# Keep all extracted flows
+df_valid = df.copy()
+
+print("\nTotal flows retained:", len(X))
 
 # Apply the ORIGINAL training scaler
+print("\nScaling features...")
+
 X_scaled = scaler.transform(X)
 
 X_scaled = pd.DataFrame(
@@ -129,25 +142,34 @@ dt_predictions = dt_model.predict(X_selected)
 lr_predictions = lr_model.predict(X_selected)
 
 # Convert encoded labels to readable labels
-label_names = {0: "BENIGN", 1: "DDoS"}
+label_names = {
+    0: "BENIGN",
+    1: "DDoS"
+}
 
+# Build results
 results = pd.DataFrame({
     "Flow ID": df_valid["Flow ID"].values,
     "Decision Tree": [
-        label_names.get(int(x), str(x)) for x in dt_predictions
+        label_names.get(int(x), str(x))
+        for x in dt_predictions
     ],
     "Logistic Regression": [
-        label_names.get(int(x), str(x)) for x in lr_predictions
+        label_names.get(int(x), str(x))
+        for x in lr_predictions
     ]
 })
 
+# Save predictions
 results.to_csv(OUTPUT_PATH, index=False)
 
+# Display results
 print("\nPrediction results:")
 print(results.to_string(index=False))
 
-print("\nTotal valid flows:", len(results))
-print("Decision Tree predictions:")
+print("\nTotal flows processed:", len(results))
+
+print("\nDecision Tree predictions:")
 print(results["Decision Tree"].value_counts())
 
 print("\nLogistic Regression predictions:")
